@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import datetime as dt
@@ -20,12 +19,9 @@ uploaded_ph_list = st.file_uploader("Upload Public Holidays (.txt, one date per 
 def is_public_holiday(date, holiday_list):
     return date.strftime('%Y-%m-%d') in holiday_list
 
-<<<<<<< HEAD
 def round_down_nearest_half(x):
     return math.floor(x * 2) / 2
 
-=======
->>>>>>> cd35d0f7d4afde83e37aade4c8d505942e0c4468
 def calculate_pay(df, emp_info, ph_list):
     result_rows = []
 
@@ -36,11 +32,7 @@ def calculate_pay(df, emp_info, ph_list):
 
         worked_hours = (clock_out - clock_in).total_seconds() / 3600
         worked_hours -= 0.5 if worked_hours <= 7 else 1
-<<<<<<< HEAD
         worked_hours = round_down_nearest_half(worked_hours)
-=======
-        worked_hours = math.floor(worked_hours)
->>>>>>> cd35d0f7d4afde83e37aade4c8d505942e0c4468
 
         reg_hours = min(8, worked_hours)
         ot_hours = max(0, worked_hours - 8)
@@ -78,7 +70,6 @@ def calculate_pay(df, emp_info, ph_list):
             'Total Pay': total_pay
         })
 
-<<<<<<< HEAD
     result_df = pd.DataFrame(result_rows)
 
     # Add totals row
@@ -92,9 +83,6 @@ def calculate_pay(df, emp_info, ph_list):
     result_df = pd.concat([result_df, total_row], ignore_index=True)
 
     return result_df
-=======
-    return pd.DataFrame(result_rows)
->>>>>>> cd35d0f7d4afde83e37aade4c8d505942e0c4468
 
 # Process logic
 if uploaded_timesheet and uploaded_employees:
