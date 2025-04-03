@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import datetime as dt
 import math
+import calendar
 from io import BytesIO
 
 st.set_page_config(page_title="Payroll Processor (Multi-Sheet)", layout="centered")
@@ -11,7 +12,7 @@ st.markdown("Upload an Excel timesheet file with multiple worksheets. Each works
 # --- Load local files ---
 @st.cache_data
 def load_employees():
-    return pd.read_csv("employees.csv")  # Expected columns: Name,Status,Base Salary,Hourly Rate
+    return pd.read_csv("employees.csv")  # Expected columns: Name,Status,Base Salary,Hourly Rate,OT Threshold
 
 @st.cache_data
 def load_public_holidays():
@@ -34,17 +35,27 @@ st.write(ph_list)
 uploaded_timesheet = st.file_uploader("Upload Timesheet Excel (Multi-Sheet)", type=["xlsx"])
 
 # --- Helper Functions ---
+
 def is_public_holiday(date, holiday_list):
     return date.strftime('%Y-%m-%d') in holiday_list
 
 def round_down_nearest_half(x):
     return math.floor(x * 2) / 2
 
+def count_working_days(month, year):
+    """Returns the number of days in the month excluding Tuesdays."""
+    last_day = calendar.monthrange(year, month)[1]
+    working_days = sum(
+        1 for d in range(1, last_day + 1)
+        if dt.date(year, month, d).weekday() != 1  # Tuesday is 1 when Monday=0
+    )
+    return working_days
+
 def calculate_pay(df, emp_info, ph_list):
     result_rows = []
     # Process each row in the sheet
     for _, row in df.iterrows():
-        # Here, we override the 'Name' column with the employee's name (provided by the sheet name)
+        # Override the 'Name' column with the sheet name if needed
         name = row['Name']
         clock_in = pd.to_datetime(row['Clock In'])
         clock_out = pd.to_datetime(row['Clock Out'])
@@ -56,31 +67,32 @@ def calculate_pay(df, emp_info, ph_list):
             worked_hours -= 0.5 if worked_hours <= 7 else 1
         worked_hours = round_down_nearest_half(worked_hours)
         
-        # Split hours: up to 8 hours are regular; excess are overtime
-        reg_hours = min(8, worked_hours)
-        ot_hours = max(0, worked_hours - 8)
+        # Use OT Threshold from employee info instead of fixed 8 hours.
+        # Default to 8 if the OT Threshold is missing or invalid.
+        try:
+            ot_threshold = float(emp_info.iloc[0].get("OT Threshold", 8))
+        except:
+            ot_threshold = 8.0
         
-        # Get employee info (filtered already)
+        reg_hours = min(ot_threshold, worked_hours)
+        ot_hours = max(0, worked_hours - ot_threshold)
+        
+        # Get employee info for this employee (already filtered)
         emp_row = emp_info.iloc[0]
         status = emp_row['Status'].strip().lower()
         
-        # For full time, we ignore computed regular pay; use base salary as total regular pay overall.
         if status == 'full time':
-            month = clock_in.month
-            year = clock_in.year
-            working_days = sum(
-                1 for d in range(1, 32)
-                if dt.date(year, month, d) >= dt.date(year, month, 1)
-                and dt.date(year, month, d) <= dt.date(year, month, 28)
-                and dt.date(year, month, d).weekday() != 1
-            )
+            # For full time, compute hourly rate from base salary and working days.
+            month_val = clock_in.month
+            year_val = clock_in.year
+            working_days = count_working_days(month_val, year_val)
             hourly_rate = emp_row['Base Salary'] / (working_days * 8)
-            reg_pay = 0  # Per shift, computed regular pay is 0.
+            reg_pay = 0  # Regular pay computed per shift is ignored; will use base salary as total later.
         else:
             hourly_rate = emp_row['Hourly Rate']
             reg_pay = reg_hours * hourly_rate
         
-        # Check if the shift is on a public holiday
+        # Determine if the shift is on a public holiday
         is_ph = is_public_holiday(clock_in, ph_list)
         reg_multiplier = 2 if is_ph else 1
         ot_multiplier = 3 if is_ph else 1.5
@@ -103,7 +115,7 @@ def calculate_pay(df, emp_info, ph_list):
     result_df = pd.DataFrame(result_rows)
     if not result_df.empty:
         emp_status = emp_info.iloc[0]['Status'].strip().lower()
-        # For full time, set total regular pay as the base salary; for part time, sum the computed regular pay.
+        # For full time employees, the total regular pay is simply the Base Salary.
         total_reg = emp_info.iloc[0]['Base Salary'] if emp_status == 'full time' else result_df['Regular Pay'].sum()
         total_ot = result_df['Overtime Pay'].sum()
         totals = {
@@ -124,7 +136,7 @@ if uploaded_timesheet:
         # Iterate over each sheet in the uploaded Excel file.
         for sheet in xls.sheet_names:
             df_sheet = pd.read_excel(xls, sheet_name=sheet)
-            # Override or add the "Name" column with the sheet name
+            # Override the "Name" column with the sheet name (assumes sheet name equals employee name)
             df_sheet['Name'] = sheet
             # Get employee info for this sheet using the sheet name
             emp_info = employees[employees["Name"] == sheet]
