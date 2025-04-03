@@ -13,8 +13,8 @@ st.markdown("Upload an Excel timesheet file with multiple worksheets. Each works
 date_format_source = st.radio("Select Timesheet Date Format Source", options=["Feedme", "Storehub"])
 if date_format_source == "Feedme":
     date_format = "%d/%m/%Y %H:%M:%S"
-else:
-    date_format = "%m/%d/%Y %H:%M:%S"
+else:  # Storehub
+    date_format = "%m/%d/%Y %A %H:%M"
 
 # --- Load local files ---
 @st.cache_data
@@ -42,6 +42,7 @@ st.write(ph_list)
 uploaded_timesheet = st.file_uploader("Upload Timesheet Excel (Multi-Sheet)", type=["xlsx"])
 
 # --- Helper Functions ---
+
 def is_public_holiday(date, holiday_list):
     return date.strftime('%Y-%m-%d') in holiday_list
 
@@ -61,7 +62,7 @@ def calculate_pay(df, emp_info, ph_list, date_format):
     result_rows = []
     # Process each row in the sheet
     for _, row in df.iterrows():
-        # Here, we override the 'Name' column with the sheet name (already set later)
+        # Override the 'Name' column with the sheet name (already set later)
         name = row['Name']
         clock_in = pd.to_datetime(row['Clock In'], format=date_format)
         clock_out = pd.to_datetime(row['Clock Out'], format=date_format)
@@ -73,7 +74,7 @@ def calculate_pay(df, emp_info, ph_list, date_format):
             worked_hours -= 0.5 if worked_hours <= 7 else 1
         worked_hours = round_down_nearest_half(worked_hours)
         
-        # Use OT Threshold from employee info instead of a fixed 8.
+        # Use OT Threshold from employee info instead of a fixed value.
         try:
             ot_threshold = float(emp_info.iloc[0].get("OT Threshold", 8))
         except:
