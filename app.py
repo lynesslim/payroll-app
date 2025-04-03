@@ -4,9 +4,9 @@ import datetime as dt
 import math
 from io import BytesIO
 
-st.set_page_config(page_title="Payroll Processor", layout="centered")
-st.title("🧾 Payroll Processor (8-hour Rule + Public Holiday)")
-st.markdown("Select an employee, review the public holidays, then upload your timesheet file.")
+st.set_page_config(page_title="Payroll Processor (Multi-Sheet)", layout="centered")
+st.title("🧾 Payroll Processor (Multi-Sheet, 8-hour Rule + Public Holiday)")
+st.markdown("Upload an Excel timesheet file with multiple worksheets. Each worksheet contains an employee's timesheet. The app automatically loads employees and public holidays.")
 
 # --- Load local files ---
 @st.cache_data
@@ -22,22 +22,18 @@ def load_public_holidays():
 employees = load_employees()
 ph_list = load_public_holidays()
 
-# --- Employee selection ---
-employee_names = employees["Name"].unique()
-selected_employee = st.selectbox("Select Employee", employee_names)
-emp_details = employees[employees["Name"] == selected_employee].iloc[0]
-st.write("**Employee Details:**")
-st.write(emp_details)
+# Display employee data (read-only)
+st.write("**Loaded Employee Data:**")
+st.dataframe(employees)
 
 # Display public holidays (read-only)
 st.write("**Public Holidays:**")
 st.write(ph_list)
 
-# Timesheet uploader
-uploaded_timesheet = st.file_uploader("Upload Timesheet CSV or Excel", type=["csv", "xlsx"])
+# Timesheet uploader (Excel file with multiple worksheets)
+uploaded_timesheet = st.file_uploader("Upload Timesheet Excel (Multi-Sheet)", type=["xlsx"])
 
 # --- Helper Functions ---
-
 def is_public_holiday(date, holiday_list):
     return date.strftime('%Y-%m-%d') in holiday_list
 
@@ -46,32 +42,34 @@ def round_down_nearest_half(x):
 
 def calculate_pay(df, emp_info, ph_list):
     result_rows = []
-    # Process each timesheet row
+    # Process each row in the sheet
     for _, row in df.iterrows():
-        # Assume row has columns: Name, Clock In, Clock Out, etc.
+        # Expected columns in each sheet: Name, Clock In, Clock Out, Duration, etc.
         name = row['Name']
         clock_in = pd.to_datetime(row['Clock In'])
         clock_out = pd.to_datetime(row['Clock Out'])
         
         # Calculate raw worked hours
         worked_hours = (clock_out - clock_in).total_seconds() / 3600
-        # Only apply lunch break deduction if worked hours > 4 hours
+        # Apply lunch break deduction only if duration > 4 hours
         if worked_hours > 4:
             worked_hours -= 0.5 if worked_hours <= 7 else 1
         worked_hours = round_down_nearest_half(worked_hours)
         
-        # For each row, assume regular hours are up to 8, OT is any excess.
+        # Split hours: up to 8 hours are regular, excess are OT
         reg_hours = min(8, worked_hours)
         ot_hours = max(0, worked_hours - 8)
         
-        emp_row = emp_info.iloc[0]  # Since we filtered by employee
+        # Retrieve employee info by matching Name (assumes sheet Name matches employees.csv)
+        emp_row = emp_info[emp_info['Name'] == name].iloc[0]
         status = emp_row['Status'].strip().lower()
         
-        # For full time, ignore computed regular pay.
         if status == 'full time':
-            # Calculate hourly rate based on Base Salary / (working_days * 8)
+            # For full time, regular pay is simply the base salary overall,
+            # so per shift, we set computed regular pay to 0 and only calculate OT.
             month = clock_in.month
             year = clock_in.year
+            # Count working days in the month (excluding Tuesdays)
             working_days = sum(
                 1 for d in range(1, 32)
                 if dt.date(year, month, d) >= dt.date(year, month, 1)
@@ -79,10 +77,8 @@ def calculate_pay(df, emp_info, ph_list):
                 and dt.date(year, month, d).weekday() != 1
             )
             hourly_rate = emp_row['Base Salary'] / (working_days * 8)
-            # For each shift, set computed regular pay to 0;
             reg_pay = 0
         else:
-            # For part time, use provided hourly rate.
             hourly_rate = emp_row['Hourly Rate']
             reg_pay = reg_hours * hourly_rate
         
@@ -107,11 +103,9 @@ def calculate_pay(df, emp_info, ph_list):
         })
     
     result_df = pd.DataFrame(result_rows)
-    
-    # Append a totals row:
     if not result_df.empty:
         emp_status = emp_info.iloc[0]['Status'].strip().lower()
-        # For full time, set total regular pay as the base salary; for part time, sum the computed regular pay.
+        # For full time, total regular pay is the base salary; for part time, it's the sum.
         total_reg = emp_info.iloc[0]['Base Salary'] if emp_status == 'full time' else result_df['Regular Pay'].sum()
         total_ot = result_df['Overtime Pay'].sum()
         totals = {
@@ -122,32 +116,30 @@ def calculate_pay(df, emp_info, ph_list):
         }
         total_row = pd.DataFrame([totals])
         result_df = pd.concat([result_df, total_row], ignore_index=True)
-    
     return result_df
 
-# --- Process Timesheet if Uploaded ---
+# --- Process Multi-Sheet Timesheet if Uploaded ---
 if uploaded_timesheet:
     try:
-        # Load timesheet file (CSV or Excel)
-        df_timesheet = pd.read_csv(uploaded_timesheet) if uploaded_timesheet.name.endswith("csv") else pd.read_excel(uploaded_timesheet)
-        # Filter timesheet to only include rows for the selected employee
-        df_timesheet = df_timesheet[df_timesheet["Name"] == selected_employee]
+        xls = pd.ExcelFile(uploaded_timesheet)
+        processed_sheets = {}
+        for sheet in xls.sheet_names:
+            df_sheet = pd.read_excel(xls, sheet_name=sheet)
+            # No need to filter by employee since each sheet is an employee's timesheet
+            processed_sheets[sheet] = calculate_pay(df_sheet, employees, ph_list)
         
-        # Get employee info for the selected employee
-        emp_info = employees[employees["Name"] == selected_employee]
+        st.success("✅ Payroll processed for all worksheets!")
+        # Display each processed sheet in an expander
+        for sheet, df_processed in processed_sheets.items():
+            with st.expander(f"Worksheet: {sheet}"):
+                st.dataframe(df_processed)
         
-        result_df = calculate_pay(df_timesheet, emp_info, ph_list)
-        
-        st.success("✅ Payroll processed!")
-        st.dataframe(result_df)
-        
-        # Download buttons:
-        buffer = BytesIO()
-        result_df.to_excel(buffer, index=False)
-        st.download_button("📥 Download Excel", data=buffer.getvalue(), file_name="processed_payroll.xlsx")
-        
-        csv_data = result_df.to_csv(index=False).encode("utf-8")
-        st.download_button("📥 Download CSV", data=csv_data, file_name="processed_payroll.csv")
+        # Prepare a multi-sheet Excel file for download
+        output_buffer = BytesIO()
+        with pd.ExcelWriter(output_buffer, engine="openpyxl") as writer:
+            for sheet, df_processed in processed_sheets.items():
+                df_processed.to_excel(writer, sheet_name=sheet, index=False)
+        st.download_button("📥 Download Processed Payroll Excel", data=output_buffer.getvalue(), file_name="processed_payroll.xlsx")
         
     except Exception as e:
         st.error(f"❌ Error: {e}")
