@@ -53,10 +53,11 @@ def calculate_pay(df, emp_info, ph_list):
         clock_in = pd.to_datetime(row['Clock In'])
         clock_out = pd.to_datetime(row['Clock Out'])
         
-        # Calculate raw worked hours and apply break deduction:
-        # If worked <=7 hours, deduct 0.5; if >7, deduct 1 hour.
+        # Calculate raw worked hours
         worked_hours = (clock_out - clock_in).total_seconds() / 3600
-        worked_hours -= 0.5 if worked_hours <= 7 else 1
+        # Only apply lunch break deduction if worked hours > 4 hours
+        if worked_hours > 4:
+            worked_hours -= 0.5 if worked_hours <= 7 else 1
         worked_hours = round_down_nearest_half(worked_hours)
         
         # For each row, assume regular hours are up to 8, OT is any excess.
@@ -87,8 +88,9 @@ def calculate_pay(df, emp_info, ph_list):
         
         # Determine if the shift is on a public holiday
         is_ph = is_public_holiday(clock_in, ph_list)
-        # Overtime multiplier: 3x on public holiday, 1.5x otherwise.
+        reg_multiplier = 2 if is_ph else 1
         ot_multiplier = 3 if is_ph else 1.5
+        
         ot_pay = ot_hours * hourly_rate * ot_multiplier
         total_pay = reg_pay + ot_pay
         
@@ -127,15 +129,11 @@ def calculate_pay(df, emp_info, ph_list):
 if uploaded_timesheet:
     try:
         # Load timesheet file (CSV or Excel)
-        if uploaded_timesheet.name.endswith("csv"):
-            df_timesheet = pd.read_csv(uploaded_timesheet)
-        else:
-            df_timesheet = pd.read_excel(uploaded_timesheet)
-        
-        # Filter timesheet to include only rows for the selected employee.
+        df_timesheet = pd.read_csv(uploaded_timesheet) if uploaded_timesheet.name.endswith("csv") else pd.read_excel(uploaded_timesheet)
+        # Filter timesheet to only include rows for the selected employee
         df_timesheet = df_timesheet[df_timesheet["Name"] == selected_employee]
         
-        # Get employee info for the selected employee.
+        # Get employee info for the selected employee
         emp_info = employees[employees["Name"] == selected_employee]
         
         result_df = calculate_pay(df_timesheet, emp_info, ph_list)
