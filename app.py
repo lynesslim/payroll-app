@@ -46,8 +46,9 @@ uploaded_timesheet = st.file_uploader("Upload Timesheet Excel (Multi-Sheet)", ty
 def is_public_holiday(date, holiday_list):
     return date.strftime('%Y-%m-%d') in holiday_list
 
-def round_down_nearest_half(x):
-    return math.floor(x * 2) / 2
+def round_to_nearest_half(x):
+    # Rounds x to the nearest 0.5
+    return round(x * 2) / 2
 
 def count_working_days(month, year):
     """Returns the number of days in the month excluding Tuesdays."""
@@ -69,10 +70,14 @@ def calculate_pay(df, emp_info, ph_list, date_format):
         
         # Calculate raw worked hours
         worked_hours = (clock_out - clock_in).total_seconds() / 3600
-        # Apply lunch break deduction only if worked hours > 4 hours
+        # Only apply lunch break deduction if worked hours > 4 hours
         if worked_hours > 4:
-            worked_hours -= 0.5 if worked_hours <= 7 else 1
-        worked_hours = round_down_nearest_half(worked_hours)
+            # If worked hours are less than 10, deduct 0.5; if 10 or more, deduct 1 hour.
+            if worked_hours < 10:
+                worked_hours -= 0.5
+            else:
+                worked_hours -= 1
+        worked_hours = round_to_nearest_half(worked_hours)
         
         # Use OT Threshold from employee info (default to 8 if missing)
         try:
@@ -86,24 +91,22 @@ def calculate_pay(df, emp_info, ph_list, date_format):
         emp_row = emp_info.iloc[0]
         status = emp_row['Status'].strip().lower()
         
-        # For full time employees:
         if status == 'full time':
+            # For full time, compute hourly rate from Base Salary and working days.
             month_val = clock_in.month
             year_val = clock_in.year
             working_days = count_working_days(month_val, year_val)
             hourly_rate = emp_row['Base Salary'] / (working_days * 8)
+            # For full time, if on a public holiday, add extra premium:
             if is_public_holiday(clock_in, ph_list):
-                # On PH: extra premium for regular hours = 1x hourly_rate,
-                # extra premium for OT hours = 2x hourly_rate.
-                reg_pay = reg_hours * hourly_rate
-                ot_pay = ot_hours * hourly_rate * 2
+                # Extra premium: 1x for regular hours and 2x for OT hours
+                reg_pay = reg_hours * hourly_rate  # extra premium for regular hours
+                ot_pay = ot_hours * hourly_rate * 2  # extra premium for OT hours
             else:
-                # Non-PH: no extra premium for regular hours (base salary covers them),
-                # OT computed at 1.5x.
-                reg_pay = 0
+                reg_pay = 0  # Regular pay is covered by base salary
                 ot_pay = ot_hours * hourly_rate * 1.5
         else:
-            # For part time, use provided hourly rate
+            # For part time, use provided hourly rate.
             hourly_rate = emp_row['Hourly Rate']
             if is_public_holiday(clock_in, ph_list):
                 reg_pay = reg_hours * hourly_rate * 2
@@ -130,8 +133,8 @@ def calculate_pay(df, emp_info, ph_list, date_format):
     if not result_df.empty:
         emp_status = emp_info.iloc[0]['Status'].strip().lower()
         if emp_status == 'full time':
-            # For full time, total regular pay = Base Salary + extra premiums from PH shifts.
             base_salary = emp_info.iloc[0]['Base Salary']
+            # For full time, total regular pay = base salary + extra premiums from PH shifts
             extra_reg = result_df.loc[result_df['Is Public Holiday'] == True, 'Regular Pay'].sum()
             total_reg = base_salary + extra_reg
         else:
